@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}计算记录 · 物种分类整理{% endblock %}
+{% block content %}
+<h1>计算记录</h1>
+{% if runs %}
+<table>
+  <thead>
+    <tr><th>运行</th><th>时间</th><th>观测修订</th><th>沿革修订</th><th>状态</th>
+        <th>当前</th><th>可用/待核</th><th>备注</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for r in runs %}
+    <tr>
+      <td>#{{ r.id }}</td>
+      <td>{{ r.created_at }}</td>
+      <td>#{{ r.obs_revision_id }}</td>
+      <td>#{{ r.tax_revision_id }}</td>
+      <td>{{ '成功' if r.status == 'ok' else '失败' }}</td>
+      <td>{% if r.is_current %}<span class="badge ok">当前</span>{% else %}—{% endif %}</td>
+      <td class="num">{% if r.status == 'ok' %}{{ r.usable_count }} / {{ r.pending_count }}{% else %}—{% endif %}</td>
+      <td>{{ r.note }}</td>
+      <td><a href="{{ url_for('main.run_detail', run_id=r.id) }}">查看</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">还没有计算记录。</p>
+{% endif %}
+{% endblock %}

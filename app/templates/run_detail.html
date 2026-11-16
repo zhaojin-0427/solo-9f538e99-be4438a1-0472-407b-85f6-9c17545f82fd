@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_tables.html" import usable_table, pending_table %}
+{% block title %}运行 #{{ run.id }} · 物种分类整理{% endblock %}
+{% block content %}
+<h1>运行 #{{ run.id }}</h1>
+<div class="card">
+  <p>状态：{{ '成功' if run.status == 'ok' else '失败' }}
+    {% if run.is_current %}<span class="badge ok">当前结果</span>
+    {% else %}<span class="badge">历史</span>{% endif %}
+  </p>
+  <p>计算时间：{{ run.created_at }}<br>
+     固定输入：观测修订 #{{ run.obs_revision_id }}
+       {% if run.obs_revision_id == latest_obs %}（最新）{% else %}（非最新，最新为 #{{ latest_obs }}）{% endif %}、
+     沿革修订 #{{ run.tax_revision_id }}
+       {% if run.tax_revision_id == latest_tax %}（最新）{% else %}（非最新，最新为 #{{ latest_tax }}）{% endif %}</p>
+  {% if run.note %}<p>备注：{{ run.note }}</p>{% endif %}
+  {% if run.status == 'failed' %}
+  <p class="flash error">失败原因：{{ run.error }}（未产生任何结果）</p>
+  {% else %}
+  <p>可用 {{ run.usable_count }} 条 · 待核 {{ run.pending_count }} 条</p>
+  {% endif %}
+</div>
+{% if run.status == 'ok' %}
+<section class="card">
+  <h2>可用记录（{{ run.usable_count }}）</h2>
+  {{ usable_table(usable) }}
+</section>
+<section class="card">
+  <h2>待核记录（{{ run.pending_count }}）</h2>
+  {{ pending_table(pending) }}
+</section>
+{% endif %}
+{% endblock %}

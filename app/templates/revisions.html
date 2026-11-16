@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}输入修订 · 物种分类整理{% endblock %}
+{% block content %}
+<h1>输入修订</h1>
+<p class="muted">两份 CSV 均为整份更正：每次上传生成一个新修订，旧修订与其计算结果保留可查。</p>
+{% for title, rows, kind in [('观测 CSV', obs_revs, 'obs'), ('分类沿革 CSV', tax_revs, 'tax')] %}
+<section class="card">
+  <h2>{{ title }}</h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr><th>修订</th><th>上传时间</th><th>文件</th><th>行数</th><th>SHA-256</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>#{{ r.id }} {% if loop.first %}<span class="badge ok">最新</span>{% endif %}</td>
+        <td>{{ r.uploaded_at }}</td>
+        <td>{{ r.filename }}</td>
+        <td class="num">{{ r.row_count }}</td>
+        <td class="mono">{{ r.sha256[:16] }}…</td>
+        <td><a href="{{ url_for('main.download_revision', kind=kind, rev_id=r.id) }}">下载</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">尚未上传。</p>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

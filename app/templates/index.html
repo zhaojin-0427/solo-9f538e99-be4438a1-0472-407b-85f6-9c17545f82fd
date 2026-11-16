@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_tables.html" import usable_table, pending_table %}
+{% block title %}首页 · 物种分类整理{% endblock %}
+{% block content %}
+<h1>跨年观测记录 · 按现行分类整理</h1>
+
+<section class="card">
+  <h2>当前输入修订</h2>
+  <div class="rev-grid">
+    <div>
+      <h3>观测 CSV</h3>
+      {% if obs %}
+      <p>修订 #{{ obs.id }} · {{ obs.row_count }} 行 · {{ obs.uploaded_at }}<br>
+         文件：{{ obs.filename }} · SHA-256：<span class="mono">{{ obs.sha256[:12] }}…</span></p>
+      {% else %}
+      <p class="muted">尚未上传</p>
+      {% endif %}
+    </div>
+    <div>
+      <h3>分类沿革 CSV</h3>
+      {% if tax %}
+      <p>修订 #{{ tax.id }} · {{ tax.row_count }} 行 · {{ tax.uploaded_at }}<br>
+         文件：{{ tax.filename }} · SHA-256：<span class="mono">{{ tax.sha256[:12] }}…</span></p>
+      {% else %}
+      <p class="muted">尚未上传</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>重新计算</h2>
+  {% if obs_revs and tax_revs %}
+  <form method="post" action="{{ url_for('main.compute') }}">
+    <label>固定观测修订
+      <select name="obs_revision_id">
+        {% for r in obs_revs %}
+        <option value="{{ r.id }}" {% if loop.first %}selected{% endif %}>
+          #{{ r.id }} · {{ r.uploaded_at }} · {{ r.row_count }} 行{% if loop.first %}（最新）{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>固定沿革修订
+      <select name="tax_revision_id">
+        {% for r in tax_revs %}
+        <option value="{{ r.id }}" {% if loop.first %}selected{% endif %}>
+          #{{ r.id }} · {{ r.uploaded_at }} · {{ r.row_count }} 行{% if loop.first %}（最新）{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">开始计算</button>
+    <p class="muted">结果将固定所选两份修订；选择非最新修订的计算只留作历史，不作为当前结果。</p>
+  </form>
+  {% else %}
+  <p class="muted">请先上传观测 CSV 与分类沿革 CSV，再开始计算。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>当前结果</h2>
+  {% if current %}
+  <p>运行 #{{ current.id }} · {{ current.created_at }} ·
+     固定观测修订 #{{ current.obs_revision_id }}、沿革修订 #{{ current.tax_revision_id }} ·
+     可用 {{ current.usable_count }} 条 · 待核 {{ current.pending_count }} 条 ·
+     <a href="{{ url_for('main.run_detail', run_id=current.id) }}">查看完整结果</a></p>
+  <h3>可用记录（{{ current.usable_count }}）</h3>
+  {{ usable_table(usable) }}
+  <h3>待核记录（{{ current.pending_count }}）</h3>
+  {{ pending_table(pending) }}
+  {% else %}
+  <p class="muted">暂无当前结果（尚未计算，或输入已更正导致旧结果失效）。</p>
+  {% endif %}
+</section>
+{% endblock %}

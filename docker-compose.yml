@@ -1,0 +1,17 @@
+services:
+  web:
+    build: .
+    image: biodiversity-taxonomy:latest
+    container_name: biodiversity-web
+    ports:
+      - "8000:8000"
+    environment:
+      # 生产部署请用环境变量覆盖：SECRET_KEY=xxx docker compose up -d
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      DB_PATH: /data/app.db
+    volumes:
+      - app_data:/data
+    restart: unless-stopped
+
+volumes:
+  app_data:

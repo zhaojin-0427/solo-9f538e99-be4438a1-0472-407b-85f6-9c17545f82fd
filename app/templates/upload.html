@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}上传{{ label }} CSV · 物种分类整理{% endblock %}
+{% block content %}
+<h1>上传{{ label }} CSV（整份更正）</h1>
+<div class="card">
+  {% if kind == 'obs' %}
+  <p>必需列：<code>record_no, initial_taxon, quantity</code><br>
+     规则：记录号在文件内唯一；数量为非负整数；至多 100 行。</p>
+  {% else %}
+  <p>必需列：<code>round, old_id, new_id</code><br>
+     规则：轮次为 1~4 的整数且从 1 开始连续；同轮允许一对多、多对一；至多 40 行。</p>
+  {% endif %}
+  <p class="muted">每次上传替换整份数据并生成新修订，旧修订与其计算结果保留可查。
+     列名支持常见中英文别名（如 记录号/初始分类号/数量、轮次/旧号/新号），编码支持 UTF-8 / GBK。</p>
+  <form method="post" enctype="multipart/form-data">
+    <p><input type="file" name="file" accept=".csv,text/csv"></p>
+    <p>或粘贴 CSV 文本：<br>
+      <textarea name="pasted" rows="8" cols="64"
+                placeholder="{% if kind == 'obs' %}record_no,initial_taxon,quantity{% else %}round,old_id,new_id{% endif %}"></textarea></p>
+    <button type="submit">上传并保存为新修订</button>
+  </form>
+</div>
+{% endblock %}
