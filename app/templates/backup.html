@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}备份与恢复 · 物种分类整理{% endblock %}
+{% block content %}
+<h1>整库备份与恢复</h1>
+
+<section class="card">
+  <h2>下载整库备份</h2>
+  <p>备份涵盖数据库中全部业务数据：</p>
+  <ul>
+    <li>观测 CSV 与分类沿革 CSV 的<strong>全部输入修订</strong>（含修订编号、上传原文、SHA-256）；</li>
+    <li><strong>全部计算记录</strong>（成功与失败、是否当前、固定的输入修订、可用 / 待核汇总）；</li>
+    <li>每条成功计算的<strong>全部结果行</strong>（可用记录与待核原因），保留原始编号与当前结果标记。</li>
+  </ul>
+  <p>当前库内容：观测修订 <strong>{{ counts.obs_revision }}</strong> 个、
+     沿革修订 <strong>{{ counts.tax_revision }}</strong> 个、
+     计算记录 <strong>{{ counts.run }}</strong> 条。</p>
+  <p>备份为 ZIP 包，带应用签名（HMAC-SHA256）与逐表校验和，
+     恢复时仅接受本应用导出的完整备份；备份读取的是同一时刻的已提交快照，
+     备份期间的上传与计算仍可正常完成。</p>
+  <form method="get" action="{{ url_for('main.backup_download') }}">
+    <button type="submit">下载整库备份（.zip）</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>上传备份并恢复（整库替换）</h2>
+  <p>恢复会用备份<strong>完整替换</strong>当前数据库，分两步进行：先上传校验并预览，
+     再由你显式确认替换。备份损坏、被篡改、缺少文件或存在引用缺失时一律拒绝，原库不变；
+     恢复在单事务内完成，中断或失败只可能保留恢复前或恢复后的完整状态。</p>
+  <p><a class="button-link" href="{{ url_for('main.restore_upload') }}">前往上传备份 →</a></p>
+</section>
+{% endblock %}

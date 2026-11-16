@@ -14,6 +14,7 @@
   <a href="{{ url_for('main.upload_tax') }}">上传沿革 CSV</a>
   <a href="{{ url_for('main.runs') }}">计算记录</a>
   <a href="{{ url_for('main.revisions') }}">输入修订</a>
+  <a href="{{ url_for('main.backup_page') }}">备份与恢复</a>
 </nav>
 <main>
   {% with messages = get_flashed_messages(with_categories=true) %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}上传备份 · 物种分类整理{% endblock %}
+{% block content %}
+<h1>上传备份（恢复第 1 步：校验与预览）</h1>
+<div class="card">
+  <p>请选择本应用「下载整库备份」导出的 ZIP 包。系统会先做完整校验：</p>
+  <ul>
+    <li>校验应用签名（HMAC-SHA256）与逐表 SHA-256，非本应用导出或被篡改即拒绝；</li>
+    <li>检查必备文件、编号唯一性、计算记录对输入修订的引用、结果行对计算记录的引用；</li>
+    <li>任何损坏或引用缺失都在写库前拒绝，<strong>当前数据库保持不变</strong>。</li>
+  </ul>
+  <form method="post" enctype="multipart/form-data">
+    <p><input type="file" name="backup" accept=".zip,application/zip" required></p>
+    <button type="submit">上传并校验备份</button>
+  </form>
+  <p class="muted">校验通过后才会进入确认页；仅上传不会改动任何数据。</p>
+</div>
+{% endblock %}

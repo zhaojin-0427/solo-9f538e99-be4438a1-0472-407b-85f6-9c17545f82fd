@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}确认恢复 · 物种分类整理{% endblock %}
+{% block content %}
+<h1>确认整库恢复（恢复第 2 步：替换）</h1>
+<div class="card">
+  <h2>备份内容预览（导出时间：{{ exported_at }}）</h2>
+  <table>
+    <tbody>
+      <tr><th>观测输入修订</th><td class="num">{{ summary.obs }} 个</td></tr>
+      <tr><th>分类沿革修订</th><td class="num">{{ summary.tax }} 个</td></tr>
+      <tr><th>计算记录</th><td class="num">{{ summary.runs }} 条（其中失败 {{ summary.failed }} 条）</td></tr>
+      <tr><th>结果行</th><td class="num">可用 {{ summary.usable }} 行 · 待核 {{ summary.pending }} 行</td></tr>
+      <tr><th>当前结果标记</th>
+        <td>{% if summary.current %}运行 #{{ summary.current.id }}（固定观测 #{{ summary.current.obs_revision_id }}、沿革 #{{ summary.current.tax_revision_id }}）{% else %}无当前结果{% endif %}</td></tr>
+    </tbody>
+  </table>
+  <p class="flash error">确认后，当前数据库将被<strong>完整替换</strong>为上述备份内容：
+     修订号、运行号、输入原文与当前结果标记均按备份保留；恢复前已开始但未完成的
+     上传 / 计算（含失败记录）不会写回。此操作在单事务内执行，失败会整体回滚。</p>
+  <form method="post" action="{{ url_for('main.restore_confirm') }}">
+    <input type="hidden" name="token" value="{{ token }}">
+    <button type="submit">确认替换并恢复</button>
+  </form>
+  <form method="post" action="{{ url_for('main.restore_cancel') }}" style="margin-top:0.6rem">
+    <input type="hidden" name="token" value="{{ token }}">
+    <button type="submit" class="secondary">取消（保留当前数据库）</button>
+  </form>
+</div>
+{% endblock %}

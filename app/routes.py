@@ -1,21 +1,25 @@
-"""网页路由：上传整份修订、逐轮计算、当前结果与历史查询。
+"""网页路由：上传整份修订、逐轮计算、当前结果与历史查询、整库备份与恢复。
 
 关键约束：
 - 生成结果固定两份输入修订（run.obs_revision_id / run.tax_revision_id）；
 - 任一输入整份更正后，旧的当前结果立即失效（同事务清除 is_current），但保留可查；
 - 计算完成时若固定的修订已非最新，按迟到计算处理，仅留作历史；
-- 运行记录与其全部结果行在同一事务写入，失败整体回滚，只留一条无结果的失败记录。
+- 运行记录与其全部结果行在同一事务写入，失败整体回滚，只留一条无结果的失败记录；
+- 每个请求先开快照读事务并捕获 generation；写事务经 begin_write 升级并复查
+  generation，若期间发生整库恢复则整体回滚（恢复前已开始的上传 / 计算，
+  含失败记录，一律不得写回恢复后的库）。
 """
 from __future__ import annotations
 
 import hashlib
+import os
 from datetime import datetime, timezone
 
-from flask import (Blueprint, Response, abort, flash, redirect,
-                   render_template, request, url_for)
+from flask import (Blueprint, Response, abort, current_app, flash, g,
+                   redirect, render_template, request, url_for)
 
-from . import taxonomy
-from .db import get_db
+from . import backup, taxonomy
+from .db import GenerationMismatchError, begin_write, end_snapshot, get_db
 
 bp = Blueprint("main", __name__)
 
@@ -27,6 +31,13 @@ _KIND_CONF = {
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+@bp.after_request
+def _close_snapshot(response):
+    # 请求结束时若仍持有只读快照事务则提交释放，绝不遗留打开的事务
+    end_snapshot(get_db())
+    return response
 
 
 @bp.route("/")
@@ -86,7 +97,10 @@ def _handle_upload(kind: str):
             return redirect(request.url)
         digest = hashlib.sha256(data).hexdigest()
         db = get_db()
-        db.execute("BEGIN IMMEDIATE")
+        try:
+            begin_write(db, g.snapshot_generation)
+        except GenerationMismatchError:
+            return _reject_after_restore()
         try:
             cur = db.execute(
                 f"INSERT INTO {table}"
@@ -98,6 +112,9 @@ def _handle_upload(kind: str):
             cleared = db.execute(
                 "UPDATE run SET is_current = 0 WHERE is_current = 1").rowcount
             db.commit()
+        except GenerationMismatchError:
+            db.rollback()
+            return _reject_after_restore()
         except Exception:
             db.rollback()
             raise
@@ -108,6 +125,13 @@ def _handle_upload(kind: str):
         flash(msg, "ok")
         return redirect(url_for("main.index"))
     return render_template("upload.html", kind=kind, label=label)
+
+
+def _reject_after_restore():
+    """写事务围栏失败：恢复已完成，本次操作整体作废。"""
+    flash("操作期间数据库已被整库恢复，本次上传 / 计算已作废，"
+          "请基于恢复后的数据重新操作", "error")
+    return redirect(url_for("main.index"))
 
 
 @bp.route("/upload/observations", methods=["GET", "POST"])
@@ -140,11 +164,13 @@ def compute():
         usable, pending = taxonomy.compute_results(obs_rows, rounds_map, max_round)
         run_id, is_current = _write_run(db, obs_id, tax_id, usable, pending)
     except taxonomy.CsvError as exc:
-        _record_failed_run(db, obs_id, tax_id, f"输入解析失败：{exc}")
+        if not _record_failed_run(db, obs_id, tax_id, f"输入解析失败：{exc}"):
+            return _reject_after_restore()
         flash("计算失败：固定修订的内容无法解析，未产生任何结果", "error")
         return redirect(url_for("main.runs"))
     except Exception as exc:  # 任何失败都不得开放半份结果
-        _record_failed_run(db, obs_id, tax_id, f"{type(exc).__name__}: {exc}")
+        if not _record_failed_run(db, obs_id, tax_id, f"{type(exc).__name__}: {exc}"):
+            return _reject_after_restore()
         flash("计算失败，未开放任何部分结果；失败记录已留档", "error")
         return redirect(url_for("main.runs"))
     if is_current:
@@ -160,9 +186,9 @@ def _write_run(db, obs_id: int, tax_id: int, usable: list, pending: list):
     """单事务写入运行与全部结果，返回 (run_id, is_current)。
 
     是否成为当前结果以提交时刻的最新修订为准：若固定的修订已非最新
-    （例如计算期间输入被更正），则按迟到计算仅留作历史。
+    （例如计算期间输入被更正或数据库被恢复），则按迟到计算仅留作历史。
     """
-    db.execute("BEGIN IMMEDIATE")
+    begin_write(db, g.snapshot_generation)  # 失败由 compute 的调用方处理
     try:
         latest_obs = db.execute("SELECT MAX(id) AS m FROM obs_revision").fetchone()["m"]
         latest_tax = db.execute("SELECT MAX(id) AS m FROM tax_revision").fetchone()["m"]
@@ -195,18 +221,26 @@ def _write_run(db, obs_id: int, tax_id: int, usable: list, pending: list):
         raise
 
 
-def _record_failed_run(db, obs_id: int, tax_id: int, error: str) -> None:
-    """失败只留一条无结果行的运行记录，绝不写入部分结果。"""
+def _record_failed_run(db, obs_id: int, tax_id: int, error: str) -> bool:
+    """失败只留一条无结果行的运行记录，绝不写入部分结果。
+
+    返回 False 表示期间发生整库恢复，失败记录也不得写回（已回滚）。
+    """
     try:
-        db.execute("BEGIN IMMEDIATE")
+        begin_write(db, g.snapshot_generation)
         db.execute(
             "INSERT INTO run (created_at, obs_revision_id, tax_revision_id, status,"
             " is_current, note, error)"
             " VALUES (?, ?, ?, 'failed', 0, '失败，未产生任何结果', ?)",
             (_now(), obs_id, tax_id, error))
         db.commit()
+        return True
+    except GenerationMismatchError:
+        db.rollback()
+        return False
     except Exception:
         db.rollback()
+        raise
 
 
 @bp.route("/runs")
@@ -255,3 +289,138 @@ def download_revision(kind: str, rev_id: int):
         row["content"], mimetype="text/csv; charset=utf-8",
         headers={"Content-Disposition":
                  f"attachment; filename={kind}_revision_{rev_id}.csv"})
+
+
+# ---------------------------------------------------------------------------
+# 整库备份与恢复
+# ---------------------------------------------------------------------------
+
+def _staging_path(token: str) -> str:
+    # 令牌仅含 URL 安全字符，拼接前再防御性校验，杜绝路径穿越
+    if not token or not all(c.isalnum() or c in "-_" for c in token):
+        abort(404)
+    return os.path.join(current_app.config["RESTORE_STAGING_DIR"], f"{token}.zip")
+
+
+@bp.route("/backup")
+def backup_page():
+    db = get_db()
+    counts = {t: db.execute(
+        f"SELECT COUNT(*) AS c FROM {t}").fetchone()["c"]
+        for t in ("obs_revision", "tax_revision", "run")}
+    return render_template("backup.html", counts=counts)
+
+
+@bp.route("/backup/download")
+def backup_download():
+    db = get_db()
+    data = backup.create_backup(db, current_app.config["SECRET_KEY"])
+    exported_at = _now()
+    resp = Response(data, mimetype="application/zip")
+    resp.headers["Content-Disposition"] = (
+        f"attachment; filename={backup.backup_filename(exported_at)}")
+    return resp
+
+
+@bp.route("/restore", methods=["GET", "POST"])
+def restore_upload():
+    """第一步：上传备份并完整校验，通过后暂存并展示确认页（原库不变）。"""
+    if request.method == "POST":
+        file = request.files.get("backup")
+        if file is None or not file.filename:
+            flash("请选择本应用导出的整库备份（.zip）", "error")
+            return redirect(request.url)
+        data = file.read()
+        try:
+            parsed = backup.parse_and_validate_backup(
+                data, current_app.config["SECRET_KEY"])
+        except backup.BackupError as exc:
+            # 全部检查均在写库前完成：拒绝时原库保持不变
+            flash(str(exc), "error")
+            return redirect(request.url)
+        token = backup.new_restore_token()
+        with open(_staging_path(token), "wb") as fh:
+            fh.write(data)
+        summary = _backup_summary(parsed)
+        return render_template("restore_confirm.html",
+                               token=token, summary=summary,
+                               exported_at=parsed["marker"]["exported_at"])
+    return render_template("restore_upload.html")
+
+
+def _backup_summary(parsed: dict) -> dict:
+    tables = parsed["tables"]
+    return {
+        "obs": len(tables["obs_revision"]),
+        "tax": len(tables["tax_revision"]),
+        "runs": len(tables["run"]),
+        "failed": sum(1 for r in tables["run"] if r["status"] == "failed"),
+        "current": next(
+            (r for r in tables["run"] if r.get("is_current")), None),
+        "usable": len(tables["run_usable"]),
+        "pending": len(tables["run_pending"]),
+    }
+
+
+@bp.route("/restore/confirm", methods=["POST"])
+def restore_confirm():
+    """第二步：确认替换。单事务整库恢复，失败 / 中断均不产生半份状态。"""
+    token = request.form.get("token", "")
+    path = _staging_path(token)
+    if not os.path.exists(path):
+        flash("恢复会话不存在或已过期，请重新上传备份", "error")
+        return redirect(url_for("main.restore_upload"))
+    with open(path, "rb") as fh:
+        data = fh.read()
+    # 恢复前重新完整校验，避免暂存文件被替换 / 破坏
+    try:
+        parsed = backup.parse_and_validate_backup(
+            data, current_app.config["SECRET_KEY"])
+    except backup.BackupError as exc:
+        _discard_staging(path)
+        flash(str(exc), "error")
+        return redirect(url_for("main.restore_upload"))
+
+    db = get_db()
+    try:
+        begin_write(db, g.snapshot_generation)
+    except GenerationMismatchError:
+        _discard_staging(path)
+        return _reject_after_restore()
+    try:
+        backup.restore_backup(db, parsed)
+        db.commit()
+    except Exception as exc:
+        db.rollback()  # 整体回滚：库保持恢复前的完整状态
+        _discard_staging(path)
+        if isinstance(exc, backup.BackupError):
+            flash(f"恢复失败，已整体回滚，原库未改动：{exc}", "error")
+        else:
+            flash(f"恢复失败，已整体回滚，原库未改动："
+                  f"{type(exc).__name__}: {exc}", "error")
+        return redirect(url_for("main.restore_upload"))
+    _discard_staging(path)
+    s = _backup_summary(parsed)
+    flash(
+        "整库恢复成功：已用备份完整替换当前数据库。"
+        f"观测修订 {s['obs']} 个、沿革修订 {s['tax']} 个、计算记录 {s['runs']} 条"
+        "（含失败记录），编号、输入原文与当前结果标记均按备份保留；"
+        "恢复前已开始但未完成的上传 / 计算不会写回。", "ok")
+    return redirect(url_for("main.index"))
+
+
+@bp.route("/restore/cancel", methods=["POST"])
+def restore_cancel():
+    path = _staging_path(request.form.get("token", ""))
+    _discard_staging(path)
+    flash("已取消恢复，数据库未做任何改动", "ok")
+    return redirect(url_for("main.backup_page"))
+
+
+def _discard_staging(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass

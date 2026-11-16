@@ -7,8 +7,10 @@ services:
       - "8000:8000"
     environment:
       # 生产部署请用环境变量覆盖：SECRET_KEY=xxx docker compose up -d
+      # SECRET_KEY 同时用于备份 HMAC 签名；更换密钥后旧备份将无法恢复
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
       DB_PATH: /data/app.db
+      RESTORE_STAGING_DIR: /data/restore_staging
     volumes:
       - app_data:/data
     restart: unless-stopped
